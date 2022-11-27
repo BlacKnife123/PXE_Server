@@ -1,0 +1,224 @@
+---
+- hosts: all
+  remote_user: root
+  tasks:
+  
+    - name: IP Config
+      community.general.nmcli:
+        conn_name: eth1
+        ifname: eth1
+        type: ethernet
+        ip4: 10.20.30.1/24
+        gw4: 10.20.30.254
+        dns4: 10.20.30.254
+        zone: internal
+        state: present
+  
+    - name: Make External card
+      community.general.nmcli:
+        conn_name: eth0
+        ifname: eth0
+        type: ethernet
+        zone: external
+        state: present
+
+    - name: Install autoyast
+      community.general.zypper:
+        name: autoyast2
+        state: latest
+
+    - name: Create autoyast file
+      command: yast2 clone_system
+  
+    - name: Install needed services
+      community.general.zypper:
+        name: '{{item}}'
+        state: latest
+      loop:
+        - dhcp-server
+        - bind
+        - apache2
+        - tftp
+        - xinetd
+
+      
+    - name: Remove TFTP for ATFTP
+      command: zypper -n rm tftp
+      
+    - name: Install ATFTP
+      community.general.zypper:
+        name: atftp
+        state: latest
+      
+    - name: Forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        sysctl_set: yes
+        state: present
+        reload: yes
+  
+    - name: Set up dhcp config
+      template:
+        dest: /etc/dhcpd.conf
+        src: template/dhcpd.j2
+  
+    - name: Set up interface listener
+      ansible.builtin.replace:
+        path: /etc/sysconfig/dhcpd
+        regexp: 'DHCPD_INTERFACE=""'
+        replace: 'DHCPD_INTERFACE="eth1"'
+  
+    - name: Start DHCP and DNS
+      ansible.builtin.service:
+        enabled: yes
+        name: '{{item}}'
+      loop:
+        - named
+        - dhcpd
+  
+    - name: Add forwarder address
+      template:
+        dest: /etc/named.d/forwarders.conf
+        src: template/forwarders.j2
+  
+    - name: set internal card
+      ansible.posix.firewalld:
+        interface: eth1
+        zone: internal
+        permanent: yes
+        state: enabled
+    
+    - name: set external card
+      ansible.posix.firewalld:
+        interface: eth0
+        zone: external
+        permanent: yes
+        state: enabled 
+  
+    - name: Change DNS Config
+      template:
+        src: template/dns_conf.j2
+        dest: /etc/named.conf
+  
+    - name: Create zone file
+      command: touch /var/lib/named/master/example.local
+  
+    - name: Add primary zone
+      template:
+        src: template/primary_zone.j2
+        dest: /var/lib/named/master/example.local
+  
+    - name: Open ports
+      command: firewall-cmd --permanent --zone=internal '{{item}}'
+      loop:
+        - '--add-port=53/udp'
+        - '--add-service=ftp'
+        - '--add-service=tftp'
+        - '--add-service=http'
+        - '--add-service=https'
+        - '--add-service=tftp-client'
+
+    - name: reload firewall
+      command: firewall-cmd --reload
+
+    - name: NAT 
+      command: iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+      
+    - name: Create Vhost file
+      command: touch /etc/apache2/vhosts.d/example.local.conf
+        
+    - name: Add Vhost
+      template:
+        src: template/vhost.j2
+        dest: /etc/apache2/vhosts.d/example.local.conf
+
+    - name: Config Apache file
+      template:
+        src: template/OpenSuse_default-server.j2
+        dest: /etc/apache2/default-server.conf
+
+    - name: Create Folder with ISO and autoyast
+      command: mkdir /srv/www/suse-os
+    
+    - name: Mount ISO to Folder
+      command: mount /dev/cdrom /tmp
+
+    - name: Copy ISO to page
+      command: "cp -r /tmp/ /srv/www/suse-os/dvd/"
+
+    - name: Unmount ISO
+      command: umount /tmp
+
+    - name: Create PXE config Folder
+      command: mkdir /srv/tftpboot/pxelinux.cfg
+
+    - name: Create autoyast Folder
+      command: mkdir /srv/www/suse-os/dvd/autoyast/
+
+    - name: Copy autoyast file to correct Folder
+      command: cp /root/autoinst.xml /srv/www/suse-os/dvd/autoyast/'{{item}}'
+      loop:
+        - autoyast.xml
+        - autoyast.yml
+
+    - name: Create PXE config file
+      command: touch /srv/tftpboot/pxelinux.cfg/default
+
+    - name: Add PXE Config
+      template:
+        src: template/default.j2
+        dest: /srv/tftpboot/pxelinux.cfg/default
+
+    - name: Copy initrd and linux file to tftp Folder
+      command: cp /srv/www/suse-os/dvd/boot/x86_64/loader/'{{item}}' /srv/tftpboot/
+      loop:
+        - initrd
+        - linux   
+
+    - name: Copy pxelinux 
+      command: cp /usr/share/syslinux/pxelinux.0 /srv/tftpboot/
+
+    - name: Copy EFI files
+      command: cp /srv/www/suse-os/dvd/EFI/BOOT/'{{item}}' /srv/tftpboot/
+      loop:
+        - MokManager.efi
+        - grub.cfg
+        - grub.efi
+        - bootx64.efi
+
+    - name: Copyt EFI folders
+      command: cp -r /srv/www/suse-os/dvd/'{{item}}' /srv/tftpboot
+      loop:
+        - EFI
+        - boot
+      
+    - name: Add grub.cfg conf
+      ansible.builtin.template:
+        src: template/grub.j2
+        dest: /srv/tftpboot/grub.cfg
+
+    - name: Create tftp file 
+      command: touch /etc/xinetd.d/tftp
+
+    - name: Add tftp config
+      template:
+        src: template/tftp.j2
+        dest: /etc/xinetd.d/tftp
+
+    - name: Add access to autoyast file
+      command: chmod 777 /srv/www/suse-os/dvd/autoyast/autoyast.xml
+
+    - name: tftp golder
+      command: grub2-mknetdir
+
+    - name: Start DHCP and DNS
+      ansible.builtin.service:
+        state: started
+        name: '{{item}}'
+      loop:
+        - named
+        - dhcpd
+        - apache2
+        - atftpd.socket
+        - xinetd

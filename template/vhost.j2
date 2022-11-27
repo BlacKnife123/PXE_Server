@@ -1,0 +1,8 @@
+<VirtualHost *:80>
+  ServerName pxe.install
+  DocumentRoot /srv/www/suse-os
+  <Directory "/srv/www/suse-os">
+    Options Indexes FollowSymLinks
+    AllowOverride None
+  </Directory>
+</VirtualHost>
