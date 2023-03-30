@@ -21,14 +21,6 @@
         type: ethernet
         zone: external
         state: present
-
-    - name: Install autoyast
-      community.general.zypper:
-        name: autoyast2
-        state: latest
-
-    - name: Create autoyast file
-      command: yast2 clone_system
   
     - name: Install needed services
       community.general.zypper:
@@ -40,8 +32,8 @@
         - apache2
         - tftp
         - xinetd
+        - wget
 
-      
     - name: Remove TFTP for ATFTP
       command: zypper -n rm tftp
       
@@ -138,30 +130,29 @@
         src: template/OpenSuse_default-server.j2
         dest: /etc/apache2/default-server.conf
 
-    - name: Create Folder with ISO and autoyast
-      command: mkdir /srv/www/suse-os
+    - name: Download ISO
+      command: $ wget -O /tmp/ https://download.opensuse.org/distribution/leap/15.3/iso/openSUSE-Leap-15.3-DVD-x86_64.iso
     
-    - name: Mount ISO to Folder
-      command: mount /dev/cdrom /tmp
+    - name: Create folder for ISO
+      command: mkdir /mnt/opensuse
+
+    - name: Mount ISO
+      command: mount -o loop /tmp/openSUSE-Leap-15.3-DVD-x86_64.iso /mnt/opensuse
 
     - name: Copy ISO to page
-      command: "cp -r /tmp/ /srv/www/suse-os/dvd/"
+      command: "cp -r /mnt/opensuse /srv/www/suse-os/dvd/"
 
     - name: Unmount ISO
-      command: umount /tmp
+      command: umount /mnt/opensuse
 
     - name: Create PXE config Folder
       command: mkdir /srv/tftpboot/pxelinux.cfg
 
     - name: Create autoyast Folder
       command: mkdir /srv/www/suse-os/dvd/autoyast/
-
-    - name: Copy autoyast file to correct Folder
-      command: cp /root/autoinst.xml /srv/www/suse-os/dvd/autoyast/'{{item}}'
-      loop:
-        - autoyast.xml
-        - autoyast.yml
-
+      
+      
+      
     - name: Create PXE config file
       command: touch /srv/tftpboot/pxelinux.cfg/default
 
